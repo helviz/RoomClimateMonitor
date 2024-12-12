@@ -7,45 +7,78 @@
 #define DHTTYPE DHT11
 DHT_Unified dht(DHTPIN, DHTTYPE);
 
+
+#define SET_BIT(port, bit) ((port) |= (1 << (bit)))
+#define CLEAR_BIT(port, bit) ((port) &= ~(1 << (bit)))
+#define TOGGLE_BIT(port, bit) ((port) ^= (1 << (bit)))
+#define READ_BIT(port, bit) (((port) >> (bit)) & 1)
+
+
+#define ERROR_LED_PIN PB0 
+
 float temperature = 0;
 float humidity = 0;
 
 void setup() {
-  Serial.begin(9600);  // Debugging
-  Wire.begin(8);       // Set I2C address of this board as 8
-  dht.begin();
-  Serial.println("Board 1: Sensor setup complete");
-  Wire.onRequest(sendData);
+    
+    Serial.begin(9600);
+
+    
+    Wire.begin(8); 
+
+    
+    dht.begin();
+
+    
+    DDRB |= (1 << ERROR_LED_PIN); 
+    CLEAR_BIT(PORTB, ERROR_LED_PIN); 
+
+    Serial.println("Board 1: Sensor setup complete");
+
+    
+    Wire.onRequest(sendData);
 }
 
 void loop() {
-  sensors_event_t tempEvent, humEvent;
-  dht.temperature().getEvent(&tempEvent);
-  dht.humidity().getEvent(&humEvent);
+    
+    sensors_event_t tempEvent, humEvent;
+    dht.temperature().getEvent(&tempEvent);
+    dht.humidity().getEvent(&humEvent);
 
-  if (!isnan(tempEvent.temperature) && !isnan(humEvent.relative_humidity)) {
-    temperature = tempEvent.temperature;
-    humidity = humEvent.relative_humidity;
+    if (!isnan(tempEvent.temperature) && !isnan(humEvent.relative_humidity)) {
+        
+        temperature = tempEvent.temperature;
+        humidity = humEvent.relative_humidity;
 
-    // Debugging: Log data to Serial Monitor
-    Serial.print("Temp: ");
-    Serial.print(temperature);
-    Serial.print(" C, Hum: ");
-    Serial.print(humidity);
-    Serial.println(" %");
-  } else {
-    Serial.println("Sensor error: Unable to read data");
-  }
+        
+        Serial.print("Temp: ");
+        Serial.print(temperature);
+        Serial.print(" C, Hum: ");
+        Serial.print(humidity);
+        Serial.println(" %");
 
-  delay(2000); // Wait 2 seconds between readings
+        
+        CLEAR_BIT(PORTB, ERROR_LED_PIN);// Turn off error LED if data is valid
+    } else {
+        
+        Serial.println("Sensor error: Unable to read data");
+
+        
+        SET_BIT(PORTB, ERROR_LED_PIN);// Turn on error LED to signal an issue
+    }
+
+    delay(2000); // Wait 2 seconds between readings
 }
 
 void sendData() {
-  // Pack temperature and humidity into a byte array
-  uint8_t data[8];
-  memcpy(data, &temperature, 4); // Copy 4 bytes of temperature
-  memcpy(data + 4, &humidity, 4); // Copy 4 bytes of humidity
+    // Pack temperature and humidity into a byte array
+    uint8_t data[8];
+    memcpy(data, &temperature, 4); 
+    memcpy(data + 4, &humidity, 4); 
 
-  // Send the packed data
-  Wire.write(data, 8);
+    
+    Wire.write(data, 8);
+
+    
+    Serial.println("Data sent via I2C");
 }
