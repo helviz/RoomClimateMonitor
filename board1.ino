@@ -1,84 +1,80 @@
 #include <Wire.h>
-#include <Adafruit_Sensor.h>
+#include <EEPROM.h>
+#include <avr/io.h>
+#include <avr/interrupt.h>
 #include <DHT.h>
-#include <DHT_U.h>
 
-#define DHTPIN 2
+#define DHTPIN 2     
 #define DHTTYPE DHT11
-DHT_Unified dht(DHTPIN, DHTTYPE);
+DHT dht(DHTPIN, DHTTYPE);
 
 
-#define SET_BIT(port, bit) ((port) |= (1 << (bit)))
-#define CLEAR_BIT(port, bit) ((port) &= ~(1 << (bit)))
-#define TOGGLE_BIT(port, bit) ((port) ^= (1 << (bit)))
-#define READ_BIT(port, bit) (((port) >> (bit)) & 1)
-
-
-#define ERROR_LED_PIN PB0 
-
-float temperature = 0;
-float humidity = 0;
+volatile bool updateReady = false; 
+float temperature = 0.0;
+float humidity = 0.0;
 
 void setup() {
-    
-    Serial.begin(9600);
+    Serial.begin(9600);    
+    Wire.begin(8);         
+    Wire.onRequest(sendSensorData); 
+    dht.begin();         
 
-    
-    Wire.begin(8); 
+    // Retrieve saved data from EEPROM
+    EEPROM.get(0, temperature);
+    EEPROM.get(sizeof(temperature), humidity);
 
-    
-    dht.begin();
+    // Timer1 Configuration
+    cli(); 
+    TCCR1A = 0;                        // Normal mode
+    TCCR1B = (1 << WGM12) | (1 << CS12); // prescaler = 256
+    OCR1A = 31250;                     // Compare value for ~2 seconds 
+    TIMSK1 |= (1 << OCIE1A);           // Enable Timer1 compare interrupt
+    sei(); 
 
-    
-    DDRB |= (1 << ERROR_LED_PIN); 
-    CLEAR_BIT(PORTB, ERROR_LED_PIN); 
-
-    Serial.println("Board 1: Sensor setup complete");
-
-    
-    Wire.onRequest(sendData);
+    Serial.println("Board 1: Initialized");
 }
 
 void loop() {
-    
-    sensors_event_t tempEvent, humEvent;
-    dht.temperature().getEvent(&tempEvent);
-    dht.humidity().getEvent(&humEvent);
+    if (updateReady) {
+        updateReady = false; // Reset the flag
 
-    if (!isnan(tempEvent.temperature) && !isnan(humEvent.relative_humidity)) {
-        
-        temperature = tempEvent.temperature;
-        humidity = humEvent.relative_humidity;
+        // Read data from the DHT sensor
+        float newTemp = dht.readTemperature();
+        float newHum = dht.readHumidity();
 
-        
-        Serial.print("Temp: ");
-        Serial.print(temperature);
-        Serial.print(" C, Hum: ");
-        Serial.print(humidity);
-        Serial.println(" %");
+        // Validate sensor readings
+        if (!isnan(newTemp) && !isnan(newHum)) {
+            temperature = newTemp;
+            humidity = newHum;
 
-        
-        CLEAR_BIT(PORTB, ERROR_LED_PIN);// Turn off error LED if data is valid
-    } else {
-        
-        Serial.println("Sensor error: Unable to read data");
+            // Save the updated values to EEPROM
+            EEPROM.put(0, temperature);
+            EEPROM.put(sizeof(temperature), humidity);
 
-        
-        SET_BIT(PORTB, ERROR_LED_PIN);// Turn on error LED to signal an issue
+            Serial.print("Updated Temp: ");
+            Serial.print(temperature);
+            Serial.print(" C, Hum: ");
+            Serial.print(humidity);
+            Serial.println(" %");
+        } else {
+            Serial.println("Failed to read from DHT sensor");
+        }
     }
-
-    delay(2000); // Wait 2 seconds between readings
 }
 
-void sendData() {
-    // Pack temperature and humidity into a byte array
-    uint8_t data[8];
-    memcpy(data, &temperature, 4); 
-    memcpy(data + 4, &humidity, 4); 
+ISR(TIMER1_COMPA_vect) {
+    // Set flag to indicate sensordata should be updated
+    updateReady = true;
+}
 
-    
+void sendSensorData() {
+    // Prepare (temperature and humidity)to send 
+    uint8_t data[8];
+    memcpy(data, &temperature, 4);
+    memcpy(data + 4, &humidity, 4);
+
+    // Send data over I2C
     Wire.write(data, 8);
 
-    
-    Serial.println("Data sent via I2C");
+    Serial.println("Sensor data sent");
 }
